@@ -10,9 +10,115 @@ use std::path::{Path, PathBuf, Component};
 
 use crate::error::*;
 
-pub mod preprocess_grammar {
-    #![allow(missing_docs)]
-    include!(concat!(env!("OUT_DIR"), "/preprocess_grammar.rs"));
+peg::parser!{
+    pub grammar preprocess_grammar() for str {
+        rule newline() = "\r\n" / "\n"
+
+        rule name() -> String = n:$(['a'..='z' | 'A'..='Z' | '0'..='9' | '_']+) {
+            n.to_string()
+        }
+
+        rule include_path() -> String =
+            "\"" path:$(!['"'] [_]*) "\"" { path.to_string() } /
+            "<" path:$(!['>'] [_]*) ">"   { path.to_string() }
+
+        rule parameters() -> Vec<String> = "(" [' ' | '\t']* p:(name() ** ([' ' | '\t']* "," [' ' | '\t']*)) [' ' | '\t']* ")" {
+            p
+        }
+
+        rule definition_value() -> Vec<Token> = ([' ' | '\t']+ / &("\\" newline())) v:(token()*) {
+            v
+        }
+
+        rule definition() -> Definition = n:name() p:parameters()? v:definition_value()? {
+            Definition {
+                name: n,
+                parameters: p,
+                value: v.unwrap_or_default(),
+                local: false
+            }
+        }
+
+        rule directive() -> Directive =
+            "#" [' ' | '\t']* "include" [' ' | '\t']+ path:include_path() { Directive::IncludeDirective(path) } /
+            "#" [' ' | '\t']* "define" [' ' | '\t']+ d:definition() { Directive::DefineDirective(d) } /
+            "#" [' ' | '\t']* "undef" [' ' | '\t']+ n:name() { Directive::UndefDirective(n) } /
+            "#" [' ' | '\t']* "ifdef" [' ' | '\t']+ n:name() { Directive::IfDefDirective(n) } /
+            "#" [' ' | '\t']* "ifndef" [' ' | '\t']+ n:name() { Directive::IfNDefDirective(n) } /
+            "#" [' ' | '\t']* "else" { Directive::ElseDirective } /
+            "#" [' ' | '\t']* "endif" { Directive::EndIfDirective }
+
+        rule arg_rec() = "(" (arg_rec() / "\\\\" / ("\\" newline()) / !['\r' | '\n'] [_])* ")"
+
+        rule argument() -> String = a:$((arg_rec() / "\\\\" / ("\\" newline()) / !['\r' | '\n' | ',' | ')'] [_])*) {
+            a.to_string()
+        }
+
+        pub rule arguments() -> Vec<String> = [' ' | '\t']* "(" [' ' | '\t']* a:(argument() ** ([' ' | '\t']* "," [' ' | '\t']*)) [' ' | '\t']* ")" {
+            a
+        }
+
+        rule nonmacro_token() -> String = s:$((!macro_proper() !comment_token() !concat_token() ("\\\\" / ("\\" newline()) / !['"' | '\r' | '\n'] [_]))+) {
+            s.to_string()
+        }
+
+        rule string_token() -> (String, u32) =
+                s:$("\"" ("\\\\" / ("\\" newline()) / "\"\"" / !['\r' | '\n' | '"'] [_])* "\"") {
+            let newlines = s.chars().filter(|c| c == &'\n').count() as u32;
+            (String::from(s).replace("\r\n", "\n").replace("\\\n", ""), newlines)
+        }
+
+        pub rule macro_proper() -> Macro = quoted:"#"? n:name() args:arguments()? {
+            Macro {
+                name: n,
+                arguments: args,
+                original: String::new(),
+                quoted: quoted.is_some()
+            }
+        }
+
+        rule macro_token() -> Macro = original:$(macro_proper()) {
+            //println!("parsing macro: {}", original.to_string());
+            let parsed = parse_macro(original);
+            //println!("done");
+            parsed
+            //Macro { name: original.to_string(), arguments: None, original: original.to_string(), quoted: false }
+        }
+
+        rule concat_token() = "##"
+
+        rule sl_comment() -> u32 = "//" (!newline() [_])* &newline() {
+            0
+        }
+
+        rule ml_comment() -> u32 = [' ' | '\t']* "/*" content:$((!"*/" (newline() / [_]))*) "*/" {
+            content.chars().filter(|c| c == &'\n').count() as u32
+        }
+
+        rule comment_token() -> u32 = sl_comment() / ml_comment()
+
+        rule token() -> Token =
+            c:comment_token() { Token::CommentToken(c) } /
+            sn:string_token() { Token::NewlineToken(sn.0, sn.1) } /
+            concat_token() { Token::ConcatToken } /
+            m:macro_token() { Token::MacroToken(m) } /
+            nm:nonmacro_token() { Token::RegularToken(nm) }
+
+        pub rule tokens() -> Vec<Token> = t:(token()*) {
+            t
+        }
+
+        // @todo: comments after directives (same line)
+        rule line() -> Line =
+            [' ' | '\t']* d:directive() cmts:(comment_token()*) [' ' | '\t']* {
+                Line::DirectiveLine(d, cmts.iter().sum())
+            } /
+            [' ' | '\t']* t:tokens() { Line::TokenLine(t) }
+
+        pub rule file() -> Vec<Line> = lines:(line() ** (newline())) ![_] {
+            lines
+        }
+    }
 }
 
 /// Macro definition
@@ -384,7 +490,7 @@ fn find_include_file(include_path: &str, origin: Option<&PathBuf>, search_paths:
 }
 
 fn preprocess_rec(input: String, origin: Option<PathBuf>, definition_map: &mut HashMap<String, Definition>, info: &mut PreprocessInfo, includefolders: &[PathBuf]) -> Result<String, Error> {
-    let lines = preprocess_grammar::file(&input).format_error(&origin, &input)?;
+    let lines = PreprocessParseErrorExt::format_error(preprocess_grammar::file(&input), &origin, &input)?;
     let mut output = String::from("");
     let mut original_lineno = 1;
     let mut level = 0;

@@ -92,13 +92,17 @@ pub fn binarize(input: &PathBuf) -> Result<Cursor<Box<[u8]>>, Error> {
 }
 
 /// Binarizes the given path using BI's binarize.exe (on Windows) and writes it to the output.
-pub fn cmd_binarize(input: PathBuf, output: PathBuf) -> Result<(), Error> {
+pub fn cmd_binarize(input: PathBuf, output: PathBuf, force: bool) -> Result<(), Error> {
     if !cfg!(windows) {
         return Err(error!("binarize.exe is only available on windows. Use rapify to binarize configs."));
     }
 
+    if !force && output.exists() {
+        return Err(error!("Target file \"{}\" already exists. Use --force to overwrite.", output.display()));
+    }
+
     let cursor = binarize(&input)?;
-    let mut file = File::create(output).prepend_error("Failed to open output:")?;
+    let mut file = File::create(&output).prepend_error("Failed to open output:")?;
     file.write_all(cursor.get_ref()).prepend_error("Failed to write result to file:")?;
 
     Ok(())

@@ -478,18 +478,24 @@ impl BISign {
 /// Generates a key pair with the given name.
 ///
 /// The output paths are created by appending extensions to the keyname.
-pub fn cmd_keygen(keyname: PathBuf) -> Result<(), Error> {
+pub fn cmd_keygen(keyname: PathBuf, force: bool) -> Result<(), Error> {
     let private_key = BIPrivateKey::generate(1024, keyname.file_name().unwrap().to_str().unwrap().to_string());
     let public_key = private_key.to_public_key();
     let name = keyname.file_name().unwrap().to_str().unwrap();
 
     let mut private_key_path = keyname.clone();
     private_key_path.set_file_name(format!("{}.biprivatekey", name));
-    private_key.write(&mut File::create(private_key_path).unwrap()).expect("Failed to write private key");
+    if !force && private_key_path.exists() {
+        return Err(error!("Target file \"{}\" already exists. Use --force to overwrite.", private_key_path.display()));
+    }
+    private_key.write(&mut File::create(&private_key_path).unwrap()).expect("Failed to write private key");
 
     let mut public_key_path = keyname.clone();
     public_key_path.set_file_name(format!("{}.bikey", name));
-    public_key.write(&mut File::create(public_key_path).unwrap()).expect("Failed to write public key");
+    if !force && public_key_path.exists() {
+        return Err(error!("Target file \"{}\" already exists. Use --force to overwrite.", public_key_path.display()));
+    }
+    public_key.write(&mut File::create(&public_key_path).unwrap()).expect("Failed to write public key");
 
     Ok(())
 }
@@ -497,7 +503,7 @@ pub fn cmd_keygen(keyname: PathBuf) -> Result<(), Error> {
 /// Signs a PBO with the given private key.
 ///
 /// If the signature path is not given it is inferred from the PBO path.
-pub fn cmd_sign(privatekey_path: PathBuf, pbo_path: PathBuf, signature_path: Option<PathBuf>, version: BISignVersion) -> Result<(), Error> {
+pub fn cmd_sign(privatekey_path: PathBuf, pbo_path: PathBuf, signature_path: Option<PathBuf>, version: BISignVersion, force: bool) -> Result<(), Error> {
     let privatekey = BIPrivateKey::read(&mut File::open(&privatekey_path).expect("Failed to open private key")).expect("Failed to read private key");
     let pbo = PBO::read(&mut File::open(&pbo_path).expect("Failed to open PBO")).expect("Failed to read PBO");
 
@@ -510,6 +516,9 @@ pub fn cmd_sign(privatekey_path: PathBuf, pbo_path: PathBuf, signature_path: Opt
         }
     };
 
+    if !force && sig_path.exists() {
+        return Err(error!("Target file \"{}\" already exists. Use --force to overwrite.", sig_path.display()));
+    }
     let sig = privatekey.sign(&pbo, version);
     sig.write(&mut File::create(&sig_path).expect("Failed to open signature file")).expect("Failed to write signature");
 

@@ -349,13 +349,16 @@ pub fn cmd_cat<I: Read, O: Write>(input: &mut I, output: &mut O, name: &str) -> 
     Ok(())
 }
 
-pub fn cmd_unpack<I: Read>(input: &mut I, output: PathBuf) -> Result<(), Error> {
+pub fn cmd_unpack<I: Read>(input: &mut I, output: PathBuf, force: bool) -> Result<(), Error> {
     let pbo = PBO::read(input).prepend_error("Failed to read PBO:")?;
 
     create_dir_all(&output).prepend_error("Failed to create output folder:")?;
 
     if !pbo.header_extensions.is_empty() {
         let prefix_path = output.join(PathBuf::from("$PBOPREFIX$"));
+        if !force && prefix_path.exists() {
+            return Err(error!("Target file \"{}\" already exists. Use --force to overwrite.", prefix_path.display()));
+        }
         let mut prefix_file = File::create(prefix_path).prepend_error("Failed to create prefix file:")?;
 
         for (key, value) in pbo.header_extensions.iter() {
@@ -366,6 +369,9 @@ pub fn cmd_unpack<I: Read>(input: &mut I, output: PathBuf) -> Result<(), Error> 
     for (file_name, cursor) in pbo.files.iter() {
         // @todo: windows
         let path = output.join(PathBuf::from(file_name.replace("\\", pathsep())));
+        if !force && path.exists() {
+            return Err(error!("Target file \"{}\" already exists. Use --force to overwrite.", path.display()));
+        }
         create_dir_all(path.parent().unwrap()).prepend_error("Failed to create output folder:")?;
         let mut file = File::create(path).prepend_error("Failed to open output file:")?;
         file.write_all(cursor.get_ref()).prepend_error("Failed to write output file:")?;

@@ -12,9 +12,142 @@ use crate::io::*;
 use crate::error::*;
 use crate::preprocess::*;
 
-pub mod config_grammar {
-    #![allow(missing_docs)]
-    include!(concat!(env!("OUT_DIR"), "/config_grammar.rs"));
+peg::parser! {
+    pub grammar config_grammar(warnings: &mut Vec<(usize, String, Option<&'static str>)>) for str {
+        rule whitespace() = quiet!{ [' ' | '\r' | '\n' | '\t']+ }
+
+        rule float() -> f32 = f:$((['-' | '+'])? ['0'..='9']* "." ['0'..='9']+) {
+            if f.chars().filter(|c| c == &'.').count() == 0 {
+                println!("{}", f);
+            }
+            f.parse().unwrap()
+        }
+
+        rule integer() -> i32 = i:$((['-' | '+'])? (("0x" ['0'..='9' | 'a'..='f' | 'A'..='F']+) / ['0'..='9']+)) {
+            if i.contains("0x") {
+                i32::from_str_radix(&i.replace("0x", ""), 16).unwrap()
+            } else {
+                i32::from_str_radix(i, 10).unwrap()
+            }
+        }
+
+        rule doublequoted_string() -> String = "\"" s:$(("\"\"" / !['"'] [_])*) "\"" {
+            s.to_string().replace("\"\"", "\"")
+        }
+
+        rule singlequoted_string() -> String = "'" s:$(("''" / !['\''] [_])*) "'" {
+            s.to_string().replace("''", "'")
+        }
+
+        rule unquoted_string() -> String = pos:position!() s:$(![';' | '}'] [_]*) {
+            let result = s.to_string().trim().to_string();
+            warnings.push((pos, format!("String value \"{}\" is not quoted properly.", result), Some("unquoted-string")));
+            result
+        }
+
+        rule unquoted_string_array() -> String = pos:position!() s:$( (![',' | '}' | ' ' | '\t'] [_]) (![',' | '}'] [_])* ) {
+            let result = s.to_string().trim().to_string();
+            warnings.push((pos, format!("String array element \"{}\" is not quoted properly.", result), Some("unquoted-string")));
+            result
+        }
+
+        rule string() -> String = doublequoted_string() / singlequoted_string()
+
+        rule array_element() -> ConfigArrayElement =
+            f:float()   &(whitespace()? [',' | '}']) { ConfigArrayElement::FloatElement(f) } /
+            i:integer() &(whitespace()? [',' | '}']) { ConfigArrayElement::IntElement(i) } /
+            a:array()   &(whitespace()? [',' | '}']) { ConfigArrayElement::ArrayElement(a) } /
+            s:string()  &(whitespace()? [',' | '}']) { ConfigArrayElement::StringElement(s) } /
+            s:unquoted_string_array() &(whitespace()? [',' | '}']) { ConfigArrayElement::StringElement(s) }
+
+        rule array_elements() -> Vec<ConfigArrayElement> = array_element() ** (whitespace()? "," whitespace()?)
+
+        rule array() -> ConfigArray = "{" whitespace()? elems:array_elements() whitespace()? ","? whitespace()? "}" {
+            ConfigArray {
+                is_expansion: false,
+                elements: elems
+            }
+        }
+
+        rule var() -> ConfigEntry =
+            f:float()   { ConfigEntry::FloatEntry(f) } /
+            i:integer() { ConfigEntry::IntEntry(i) } /
+            s:string()  { ConfigEntry::StringEntry(s) }
+
+        rule var_entry() -> (String, ConfigEntry) = n:name() whitespace()? "=" whitespace()? ce:var() {
+            (n, ce)
+        }
+
+        rule unquoted_string_entry() -> (String, ConfigEntry) = n:name() whitespace()? "=" whitespace()? s:unquoted_string() {
+            (n, ConfigEntry::StringEntry(s))
+        }
+
+        rule array_entry() -> (String, ConfigEntry) = n:name() whitespace()? "[" whitespace()? "]" whitespace()? "=" whitespace()? a:array() {
+            (n, ConfigEntry::ArrayEntry(a))
+        }
+
+        rule array_expansion_entry() -> (String, ConfigEntry) = n:name() whitespace()? "[" whitespace()? "]" whitespace()? "+=" whitespace()? a:array() {
+            (n, ConfigEntry::ArrayEntry(ConfigArray {
+                is_expansion: true,
+                ..a
+            }))
+        }
+
+        rule entry() -> (String, ConfigEntry) =
+            e:(class() / array_entry() / array_expansion_entry() / var_entry()) whitespace()? (";" / &"}") { e } /
+            e:unquoted_string_entry() whitespace()? (";" / &"}") { e }
+
+        rule entries() -> Vec<(String, ConfigEntry)> = entry() ** (whitespace()?)
+
+        rule name() -> String = n:$(['a'..='z' | 'A'..='Z' | '0'..='9' | '_']+) {
+            n.to_string()
+        }
+
+        rule parent() -> String = whitespace()? ":" whitespace()? n:name() {
+            n
+        }
+
+        rule regular_class() -> (String, ConfigEntry) = "class" whitespace()+ n:name() p:parent()? whitespace()? "{" whitespace()? e:entries() whitespace()? "}" {
+            let parent = p.unwrap_or_default();
+            (n, ConfigEntry::ClassEntry(ConfigClass {
+                parent,
+                is_external: false,
+                is_deletion: false,
+                entries: Some(e)
+            }))
+        }
+
+        rule external_class() -> (String, ConfigEntry) = "class" whitespace()+ n:name() {
+            (n, ConfigEntry::ClassEntry(ConfigClass {
+                parent: String::from(""),
+                is_external: true,
+                is_deletion: false,
+                entries: None
+            }))
+        }
+
+        rule deleted_class() -> (String, ConfigEntry) = "delete" whitespace()+ n:name() {
+            (n, ConfigEntry::ClassEntry(ConfigClass {
+                parent: String::from(""),
+                is_external: false,
+                is_deletion: true,
+                entries: None
+            }))
+        }
+
+        rule class() -> (String, ConfigEntry) = regular_class() / external_class() / deleted_class()
+
+        pub rule config() -> Config = whitespace()? e:entries() whitespace()? ![_] {
+            Config {
+                root_body: ConfigClass {
+                    parent: String::from(""),
+                    is_external: false,
+                    is_deletion: false,
+                    entries: Some(e)
+                }
+            }
+        }
+    }
 }
 
 /// Config
@@ -214,7 +347,7 @@ impl ConfigClass {
                             } else if c.is_external {
                                 output.write_all(format!("class {};\n", key).as_bytes())?;
                             } else {
-                                let parent = if c.parent == "" { String::from("") } else { format!(": {}", c.parent) };
+                        let parent = if c.parent.is_empty() { String::from("") } else { format!(": {}", c.parent) };
                                 match &c.entries {
                                     Some(entries) => {
                                         if !entries.is_empty() {
@@ -488,7 +621,7 @@ impl Config {
 
         let mut warnings: Vec<(usize, String, Option<&'static str>)> = Vec::new();
 
-        let result = config_grammar::config(&preprocessed, &mut warnings).format_error(&info, &preprocessed);
+        let result = ConfigParseErrorExt::format_error(config_grammar::config(&preprocessed, &mut warnings), &info, &preprocessed);
 
         for w in warnings {
 
