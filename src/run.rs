@@ -14,8 +14,6 @@ use crate::preprocess;
 use crate::sign;
 
 use serde::Deserialize;
-#[cfg(windows)]
-use ansi_term;
 
 pub const USAGE: &str = "
 armake2
@@ -33,8 +31,6 @@ Usage:
     armake2 keygen [-v] [-f] <keyname>
     armake2 sign [-v] [-f] [--v2] <privatekey> <pbo> [<signature>]
     armake2 verify [-v] <publickey> <pbo> [<signature>]
-    armake2 paa2img [-v] [-f] [<source> [<target>]]
-    armake2 img2paa [-v] [-f] [-z] [-t <paatype>] [<source> [<target>]]
     armake2 (-h | --help)
     armake2 --version
 
@@ -51,8 +47,6 @@ Commands:
     keygen      Generate a keypair with the specified path (extensions are added).
     sign        Sign a PBO with the given private key.
     verify      Verify a PBO's signature with the given public key.
-    paa2img     Convert PAA to image (PNG only). (not implemented)
-    img2paa     Convert image to PAA. (not implemented)
 
 Options:
     -v --verbose                Enable verbose output.
@@ -65,9 +59,7 @@ Options:
     -e --headerext <headerext>  Extension to add to PBO header as \"key=value\".
     -k --key <privatekey>       Sign the PBO with the given private key.
     -s --signature <signature>  Signature path to use when signing the PBO.
-       --v2                     Generate an older v2 signature.
-    -z --compress               Compress final PAA where possible.
-    -t --type <paatype>         PAA type. DXT1 or DXT5
+    --v2                     Generate an older v2 signature.
     -h --help                   Show usage information and exit.
        --version                Print the version number and exit.
 ";
@@ -87,8 +79,6 @@ pub struct Args {
     cmd_keygen: bool,
     cmd_sign: bool,
     cmd_verify: bool,
-    cmd_paa2img: bool,
-    cmd_img2paa: bool,
     flag_verbose: bool,
     flag_force: bool,
     flag_warning: Vec<String>,
@@ -99,10 +89,7 @@ pub struct Args {
     flag_signature: Option<String>,
     flag_indent: Option<String>,
     flag_v2: bool,
-    flag_compress: bool,
-    flag_type: Option<String>,
     flag_version: bool,
-    arg_wname: Vec<String>,
     arg_source: Option<String>,
     arg_target: Option<String>,
     arg_filename: String,
@@ -127,27 +114,28 @@ fn get_input(args: &Args) -> Result<Input, Error> {
 
 fn get_output(args: &Args) -> Result<Output, Error> {
     if let Some(ref target) = args.arg_target {
-        Ok(Output::File(File::create(target).prepend_error("Failed to open output file:")?))
+        let path = PathBuf::from(target);
+        if !args.flag_force && path.exists() {
+            return Err(error!("Target file \"{}\" already exists. Use --force to overwrite.", target));
+        }
+        Ok(Output::File(File::create(path).prepend_error("Failed to open output file:")?))
     } else {
         Ok(Output::Standard(stdout()))
     }
 }
 
 fn run_command(args: &Args) -> Result<(), Error> {
-    let path = args.arg_source.as_ref().map(PathBuf::from);
-    let signature = args.arg_signature.as_ref().map(PathBuf::from);
-
     let mut includefolders: Vec<PathBuf> = args.flag_include.iter().map(PathBuf::from).collect();
     includefolders.push(PathBuf::from("."));
 
     if args.cmd_binarize {
-        binarize::cmd_binarize(PathBuf::from(args.arg_source.as_ref().unwrap()), PathBuf::from(args.arg_target.as_ref().unwrap()))
+        binarize::cmd_binarize(PathBuf::from(args.arg_source.as_ref().unwrap()), PathBuf::from(args.arg_target.as_ref().unwrap()), args.flag_force)
     } else if args.cmd_rapify {
-        config::cmd_rapify(&mut get_input(&args)?, &mut get_output(&args)?, path, &includefolders)
+        config::cmd_rapify(&mut get_input(&args)?, &mut get_output(&args)?, args.arg_source.as_ref().map(PathBuf::from), &includefolders)
     } else if args.cmd_derapify {
         config::cmd_derapify(&mut get_input(&args)?, &mut get_output(&args)?)
     } else if args.cmd_preprocess {
-        preprocess::cmd_preprocess(&mut get_input(&args)?, &mut get_output(&args)?, path, &includefolders)
+        preprocess::cmd_preprocess(&mut get_input(&args)?, &mut get_output(&args)?, args.arg_source.as_ref().map(PathBuf::from), &includefolders)
     } else if args.cmd_build || args.cmd_pack {
         let flag_privatekey = args.flag_key.as_ref().map(PathBuf::from);
         let flag_signature = args.flag_signature.as_ref().map(PathBuf::from);
@@ -163,7 +151,7 @@ fn run_command(args: &Args) -> Result<(), Error> {
         }
 
         if let Some(pkey) = flag_privatekey {
-            sign::cmd_sign(pkey, PathBuf::from(args.arg_target.as_ref().unwrap()), flag_signature, sign::BISignVersion::V3)?;
+            sign::cmd_sign(pkey, PathBuf::from(args.arg_target.as_ref().unwrap()), flag_signature, sign::BISignVersion::V3, args.flag_force)?;
         }
 
         Ok(())
@@ -172,24 +160,20 @@ fn run_command(args: &Args) -> Result<(), Error> {
     } else if args.cmd_cat {
         pbo::cmd_cat(&mut get_input(&args)?, &mut get_output(&args)?, &args.arg_filename)
     } else if args.cmd_unpack {
-        pbo::cmd_unpack(&mut get_input(&args)?, PathBuf::from(&args.arg_targetfolder))
+        pbo::cmd_unpack(&mut get_input(&args)?, PathBuf::from(&args.arg_targetfolder), args.flag_force)
     } else if args.cmd_keygen {
-        sign::cmd_keygen(PathBuf::from(&args.arg_keyname))
+        sign::cmd_keygen(PathBuf::from(&args.arg_keyname), args.flag_force)
     } else if args.cmd_sign {
         let version = if args.flag_v2 { sign::BISignVersion::V2 } else { sign::BISignVersion::V3 };
-        sign::cmd_sign(PathBuf::from(&args.arg_privatekey), PathBuf::from(&args.arg_pbo), signature, version)
+        sign::cmd_sign(PathBuf::from(&args.arg_privatekey), PathBuf::from(&args.arg_pbo), args.arg_signature.as_ref().map(PathBuf::from), version, args.flag_force)
     } else if args.cmd_verify {
-        sign::cmd_verify(PathBuf::from(&args.arg_publickey), PathBuf::from(&args.arg_pbo), signature)
+        sign::cmd_verify(PathBuf::from(&args.arg_publickey), PathBuf::from(&args.arg_pbo), args.arg_signature.as_ref().map(PathBuf::from))
     } else {
         unreachable!()
     }
 }
 
 pub fn args(args: &mut Args) {
-    if cfg!(windows) {
-        ansi_support();
-    }
-
     if args.flag_indent.is_none() {
         args.flag_indent = Some("    ".to_string());
     }
@@ -201,28 +185,8 @@ pub fn args(args: &mut Args) {
         std::process::exit(0);
     }
 
-    unsafe {
-        WARNINGS_MUTED = Some(HashSet::from_iter(args.flag_warning.clone()));
-        if args.flag_verbose {
-            WARNINGS_MAXIMUM = std::u32::MAX;
-        }
-    }
-
+    error::init_warnings(HashSet::from_iter(args.flag_warning.clone()), args.flag_verbose);
     run_command(&args).print_error(true);
 
     print_warning_summary();
-}
-
-#[cfg(windows)]
-fn ansi_support() {
-    // Attempt to enable ANSI support in terminal
-    // Disable colored output if failed
-    if !ansi_term::enable_ansi_support().is_ok() {
-        colored::control::set_override(false);
-    }
-}
-
-#[cfg(not(windows))]
-fn ansi_support() {
-    unreachable!();
 }

@@ -5,15 +5,28 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::{Display};
 use std::io::{Error};
 use std::path::{PathBuf};
+use std::sync::Mutex;
 
-use colored::*;
+use colored::Colorize;
+use once_cell::sync::Lazy;
+use peg::error::ParseError;
+use peg::str::LineCol;
 
-use crate::config::*;
 use crate::preprocess::*;
 
-pub static mut WARNINGS_MAXIMUM: u32 = 10;
-static mut WARNINGS_RAISED: Option<HashMap<String, u32>> = None;
-pub static mut WARNINGS_MUTED: Option<HashSet<String>> = None;
+struct WarningState {
+    max: u32,
+    muted: HashSet<String>,
+    raised: HashMap<String, u32>,
+}
+
+static WARNING_STATE: Lazy<Mutex<WarningState>> = Lazy::new(|| {
+    Mutex::new(WarningState {
+        max: 10,
+        muted: HashSet::new(),
+        raised: HashMap::new(),
+    })
+});
 
 #[macro_export]
 macro_rules! error {
@@ -49,20 +62,20 @@ impl<T> ErrorExt<T> for Result<T, Error> {
 pub trait PreprocessParseErrorExt<T> {
     fn format_error(self, origin: &Option<PathBuf>, input: &str) -> Result<T, Error>;
 }
-impl<T> PreprocessParseErrorExt<T> for Result<T, preprocess_grammar::ParseError> {
+impl<T> PreprocessParseErrorExt<T> for Result<T, ParseError<LineCol>> {
     fn format_error(self, origin: &Option<PathBuf>, input: &str) -> Result<T, Error> {
         match self {
             Ok(t) => Ok(t),
             Err(pe) => {
-                let line_origin = pe.line - 1;
+                let line_origin = pe.location.line - 1;
                 let file_origin = match origin {
                     Some(ref path) => format!("{}:", path.to_str().unwrap().to_string()),
                     None => "".to_string()
                 };
 
-                let line = input.lines().nth(pe.line - 1).unwrap_or("");
+                let line = input.lines().nth(pe.location.line - 1).unwrap_or("");
 
-                Err(format_parse_error(line, file_origin, line_origin, pe.column, pe.expected))
+                Err(format_parse_error(line, file_origin, line_origin, pe.location.column, &pe.expected))
             }
         }
     }
@@ -71,28 +84,27 @@ impl<T> PreprocessParseErrorExt<T> for Result<T, preprocess_grammar::ParseError>
 pub trait ConfigParseErrorExt<T> {
     fn format_error(self, info: &PreprocessInfo, input: &str) -> Result<T, Error>;
 }
-impl<T> ConfigParseErrorExt<T> for Result<T, config_grammar::ParseError> {
+impl<T> ConfigParseErrorExt<T> for Result<T, ParseError<LineCol>> {
     fn format_error(self, info: &PreprocessInfo, input: &str) -> Result<T, Error> {
         match self {
             Ok(t) => Ok(t),
             Err(pe) => {
-                let line_origin = info.line_origins[min(pe.line, info.line_origins.len()) - 1].0 as usize;
-                let file_origin = match info.line_origins[min(pe.line, info.line_origins.len()) - 1].1 {
+                let line_origin = info.line_origins[min(pe.location.line, info.line_origins.len()) - 1].0 as usize;
+                let file_origin = match info.line_origins[min(pe.location.line, info.line_origins.len()) - 1].1 {
                     Some(ref path) => format!("{}:", path.to_str().unwrap().to_string()),
                     None => "".to_string()
                 };
 
-                let line = input.lines().nth(pe.line - 1).unwrap_or("");
+                let line = input.lines().nth(pe.location.line - 1).unwrap_or("");
 
-                Err(format_parse_error(line, file_origin, line_origin, pe.column, pe.expected))
+                Err(format_parse_error(line, file_origin, line_origin, pe.location.column, &pe.expected))
             }
         }
     }
 }
 
-fn format_parse_error(line: &str, file: String, line_number: usize, column_number: usize, expected: HashSet<&'static str>) -> Error {
+fn format_parse_error(line: &str, file: String, line_number: usize, column_number: usize, expected: &impl Display) -> Error {
     let trimmed = line.trim_start();
-    let expected_list: Vec<String> = expected.iter().cloned().map(|x| format!("{:?}", x)).collect();
 
     error!("In line {}{}:\n\n  {}\n  {}{}\n\nUnexpected token \"{}\", expected: {}",
         file,
@@ -101,33 +113,10 @@ fn format_parse_error(line: &str, file: String, line_number: usize, column_numbe
         " ".to_string().repeat(column_number - 1 - (line.len() - trimmed.len())),
         "^".red().bold(),
         line.chars().map(|x| x.to_string()).nth(column_number - 1).unwrap_or_else(|| "\\n".to_string()),
-        expected_list.join(", "))
+        expected)
 }
 
-pub fn warning<M: AsRef<[u8]> + Display>(msg: M, name: Option<&'static str>, location: (Option<M>,Option<u32>)) {
-    unsafe {
-        if WARNINGS_MUTED.is_none() {
-            return;
-        }
-
-        if WARNINGS_RAISED.is_none() {
-            WARNINGS_RAISED = Some(HashMap::new());
-        }
-
-        if let Some(name) = name {
-            let raised = WARNINGS_RAISED.as_ref().unwrap().get(name).unwrap_or(&0);
-            WARNINGS_RAISED.as_mut().unwrap().insert(name.to_string(), raised + 1);
-
-            if raised >= &WARNINGS_MAXIMUM {
-                return;
-            }
-
-            if WARNINGS_MUTED.as_ref().unwrap().contains(name) {
-                return;
-            }
-        }
-    }
-
+fn print_warning_message<M: AsRef<[u8]> + Display>(msg: M, name: Option<&'static str>, location: (Option<M>,Option<u32>)) {
     let loc_str = if location.0.is_some() && location.1.is_some() {
         format!("In file {}:{}: ", location.0.unwrap(), location.1.unwrap())
     } else if location.0.is_some() {
@@ -146,48 +135,75 @@ pub fn warning<M: AsRef<[u8]> + Display>(msg: M, name: Option<&'static str>, loc
     eprintln!("{}{}: {}{}", loc_str, "warning".yellow().bold(), msg, name_str);
 }
 
-pub fn warning_suppressed(name: Option<&'static str>) -> bool {
-    if name.is_none() {
-        return false;
+pub fn warning<M: AsRef<[u8]> + Display>(msg: M, name: Option<&'static str>, location: (Option<M>,Option<u32>)) {
+    let mut state = WARNING_STATE.lock().unwrap();
+
+    if let Some(name_str) = name {
+        if state.muted.contains(name_str) {
+            return;
+        }
+
+        let max_warnings = state.max;
+        let raised_count = state.raised.entry(name_str.to_string()).or_insert(0);
+        if *raised_count >= max_warnings {
+            return;
+        }
+        *raised_count += 1;
     }
 
-    unsafe {
-        if WARNINGS_MUTED.is_none() {
-            return true;
-        }
+    // Drop the lock before printing to avoid deadlocks if printing logic ever changes to call back into this module.
+    drop(state);
+    print_warning_message(msg, name, location);
+}
 
-        if WARNINGS_MUTED.as_ref().unwrap().contains(name.unwrap()) {
-            return true;
-        }
+pub fn warning_suppressed(name: Option<&'static str>) -> bool {
+    let name = match name {
+        Some(n) => n,
+        None => return false,
+    };
 
-        if WARNINGS_RAISED.is_some() {
-            let raised = WARNINGS_RAISED.as_ref().unwrap().get(name.unwrap()).unwrap_or(&0);
-            raised >= &WARNINGS_MAXIMUM
-        } else {
-            false
-        }
+    let state = WARNING_STATE.lock().unwrap();
+
+    if state.muted.contains(name) {
+        return true;
+    }
+
+    if let Some(raised) = state.raised.get(name) {
+        raised >= &state.max
+    } else {
+        return false;
     }
 }
 
 pub fn print_warning_summary() {
-    unsafe {
-        if WARNINGS_RAISED.is_none() || WARNINGS_MUTED.is_none() {
-            return;
-        }
+    let state = WARNING_STATE.lock().unwrap();
+    let mut summary_warnings = Vec::new();
 
-        for (name, raised) in WARNINGS_RAISED.as_ref().unwrap().iter() {
-            if WARNINGS_MUTED.as_ref().unwrap().contains(name) { continue; }
+    for (name, raised) in state.raised.iter() {
+        if state.muted.contains(name) { continue; }
 
-            if *raised <= WARNINGS_MAXIMUM { continue; }
-            let excess = *raised - WARNINGS_MAXIMUM;
-
-            if excess > 1 {
-                warning(format!("{} warnings of type \"{}\" were suppressed to prevent spam. Use \"-w {}\" to disable these warnings entirely.",
-                    excess, name, name), None, (None, None));
+        if *raised > state.max {
+            let excess = *raised - state.max;
+            let msg = if excess > 1 {
+                format!("{} warnings of type \"{}\" were suppressed to prevent spam. Use \"-w {}\" to disable these warnings entirely.", excess, name, name)
             } else {
-                warning(format!("{} warning of type \"{}\" was suppressed to prevent spam. Use \"-w {}\" to disable these warnings entirely.",
-                    excess, name, name), None, (None, None));
-            }
+                format!("{} warning of type \"{}\" was suppressed to prevent spam. Use \"-w {}\" to disable these warnings entirely.", excess, name, name)
+            };
+            summary_warnings.push(msg);
         }
+    }
+
+    drop(state);
+
+    for msg in summary_warnings {
+        print_warning_message(msg, None, (None, None));
+    }
+}
+
+pub fn init_warnings(muted: HashSet<String>, verbose: bool) {
+    let mut state = WARNING_STATE.lock().unwrap();
+    state.muted = muted;
+    if verbose {
+        state.max = u32::MAX;
     }
 }
