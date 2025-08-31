@@ -1,0 +1,10 @@
+# Ignore git history
+.git
+.gitignore
+
+# Ignore build artifacts
+target/
+
+# Ignore files not needed for the build
+Dockerfile
+.dockerignore
