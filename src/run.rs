@@ -9,6 +9,7 @@ use crate::binarize;
 use crate::config;
 use crate::error::*;
 use crate::io::{Input, Output};
+use crate::paa;
 use crate::pbo;
 use crate::preprocess;
 use crate::sign;
@@ -30,6 +31,8 @@ Usage:
     armake2 cat [-v] <source> <filename> [<target>]
     armake2 keygen [-v] [-f] <keyname>
     armake2 sign [-v] [-f] [--v2] <privatekey> <pbo> [<signature>]
+    armake2 paa2img [-v] [-f] <source> <target>
+    armake2 img2paa [-v] [-f] [-c] [-t <paatype>] <source> <target>
     armake2 verify [-v] <publickey> <pbo> [<signature>]
     armake2 (-h | --help)
     armake2 --version
@@ -47,6 +50,8 @@ Commands:
     keygen      Generate a keypair with the specified path (extensions are added).
     sign        Sign a PBO with the given private key.
     verify      Verify a PBO's signature with the given public key.
+    paa2img     Convert a PAA file to a standard image format (e.g. PNG).
+    img2paa     Convert a standard image file to PAA.
 
 Options:
     -v --verbose                Enable verbose output.
@@ -58,6 +63,8 @@ Options:
     -d --indent <indentation>   String to use for indentation. 4 spaces by default.
     -e --headerext <headerext>  Extension to add to PBO header as \"key=value\".
     -k --key <privatekey>       Sign the PBO with the given private key.
+    -c --compress               Compress the output PAA file.
+    -t --type <paatype>         PAA compression type (e.g. dxt1, dxt5). [default: dxt5]
     -s --signature <signature>  Signature path to use when signing the PBO.
     --v2                     Generate an older v2 signature.
     -h --help                   Show usage information and exit.
@@ -78,6 +85,8 @@ pub struct Args {
     cmd_cat: bool,
     cmd_keygen: bool,
     cmd_sign: bool,
+    cmd_paa2img: bool,
+    cmd_img2paa: bool,
     cmd_verify: bool,
     flag_verbose: bool,
     flag_force: bool,
@@ -89,6 +98,8 @@ pub struct Args {
     flag_signature: Option<String>,
     flag_indent: Option<String>,
     flag_v2: bool,
+    flag_compress: bool,
+    flag_type: String,
     flag_version: bool,
     arg_source: Option<String>,
     arg_target: Option<String>,
@@ -166,6 +177,10 @@ fn run_command(args: &Args) -> Result<(), Error> {
     } else if args.cmd_sign {
         let version = if args.flag_v2 { sign::BISignVersion::V2 } else { sign::BISignVersion::V3 };
         sign::cmd_sign(PathBuf::from(&args.arg_privatekey), PathBuf::from(&args.arg_pbo), args.arg_signature.as_ref().map(PathBuf::from), version, args.flag_force)
+    } else if args.cmd_paa2img {
+        paa::cmd_paa2img(PathBuf::from(args.arg_source.as_ref().unwrap()), PathBuf::from(args.arg_target.as_ref().unwrap()), args.flag_force)
+    } else if args.cmd_img2paa {
+        paa::cmd_img2paa(PathBuf::from(args.arg_source.as_ref().unwrap()), PathBuf::from(args.arg_target.as_ref().unwrap()), args.flag_type.clone(), args.flag_compress, args.flag_force)
     } else if args.cmd_verify {
         sign::cmd_verify(PathBuf::from(&args.arg_publickey), PathBuf::from(&args.arg_pbo), args.arg_signature.as_ref().map(PathBuf::from))
     } else {

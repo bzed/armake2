@@ -3,6 +3,7 @@
 pub mod binarize;
 pub mod config;
 pub mod error;
+pub mod paa;
 pub mod io;
 pub mod p3d;
 pub mod pbo;
