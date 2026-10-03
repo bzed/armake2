@@ -96,7 +96,9 @@ fn filehash(pbo: &PBO, version: BISignVersion) -> DigestBytes {
                     ext == "wrp" { continue; }
             },
             BISignVersion::V3 => {
-                if ext != "sqf" && ext != "inc" && ext != "bikb" &&
+                // "c": DayZ's DSSignFile also hashes Enforce Script files (verified against DSSignFile.exe
+                // from DayZ Tools); without it a DayZ server rejects the signature of a script mod
+                if ext != "sqf" && ext != "c" && ext != "inc" && ext != "bikb" &&
                     ext != "ext" && ext != "fsm" && ext != "sqm" &&
                     ext != "hpp" && ext != "cfg" && ext != "sqs" &&
                     ext != "h" { continue; }
