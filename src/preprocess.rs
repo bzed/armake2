@@ -19,8 +19,8 @@ peg::parser!{
         }
 
         rule include_path() -> String =
-            "\"" path:$(!['"'] [_]*) "\"" { path.to_string() } /
-            "<" path:$(!['>'] [_]*) ">"   { path.to_string() }
+            "\"" path:$((!['"'] [_])*) "\"" { path.to_string() } /
+            "<" path:$((!['>'] [_])*) ">"   { path.to_string() }
 
         rule parameters() -> Vec<String> = "(" [' ' | '\t']* p:(name() ** ([' ' | '\t']* "," [' ' | '\t']*)) [' ' | '\t']* ")" {
             p
@@ -48,7 +48,7 @@ peg::parser!{
             "#" [' ' | '\t']* "else" { Directive::ElseDirective } /
             "#" [' ' | '\t']* "endif" { Directive::EndIfDirective }
 
-        rule arg_rec() = "(" (arg_rec() / "\\\\" / ("\\" newline()) / !['\r' | '\n'] [_])* ")"
+        rule arg_rec() = "(" (arg_rec() / "\\\\" / ("\\" newline()) / !['\r' | '\n' | '(' | ')'] [_])* ")"
 
         rule argument() -> String = a:$((arg_rec() / "\\\\" / ("\\" newline()) / !['\r' | '\n' | ',' | ')'] [_])*) {
             a.to_string()
