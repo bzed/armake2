@@ -187,13 +187,13 @@ impl PBO {
                 let cursor = config.to_cursor()?;
 
                 files.insert(name, cursor);
-            } else if cfg!(windows) && binarize && is_binarizable {
+            } else if binarize::available() && binarize && is_binarizable {
                 let cursor = binarize::binarize(&path).prepend_error(format!("Failed to binarize {:?}:", relative).to_string())?;
 
                 files.insert(name, cursor);
             } else {
-                if is_binarizable && !cfg!(windows) {
-                    warning("On non-Windows systems binarize.exe cannot be used; file will be copied as-is.", Some("non-windows-binarization"), (Some(&relative.to_str().unwrap()), None));
+                if is_binarizable && !binarize::available() {
+                    warning("On non-Windows systems binarize.exe is only used with --proton-binarize; file will be copied as-is.", Some("non-windows-binarization"), (Some(&relative.to_str().unwrap()), None));
                 }
 
                 let mut buffer: Vec<u8> = Vec::new();

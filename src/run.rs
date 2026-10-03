@@ -24,7 +24,7 @@ Usage:
     armake2 preprocess [-v] [-f] [-w <wname>]... [-i <includefolder>]... [<source> [<target>]]
     armake2 derapify [-v] [-f] [-d <indentation>] [<source> [<target>]]
     armake2 binarize [-v] [-f] [-w <wname>]... <source> <target>
-    armake2 build [-v] [-f] [-w <wname>]... [-i <includefolder>]... [-x <excludepattern>]... [-e <headerext>]... [-k <privatekey>] [-s <signature>] <sourcefolder> [<target>]
+    armake2 build [-v] [-f] [--proton-binarize] [-w <wname>]... [-i <includefolder>]... [-x <excludepattern>]... [-e <headerext>]... [-k <privatekey>] [-s <signature>] <sourcefolder> [<target>]
     armake2 pack [-v] [-f] [-x <excludepattern>]... [-e <headerext>]... [-k <privatekey>] [-s <signature>] <sourcefolder> [<target>]
     armake2 inspect [-v] [<source>]
     armake2 unpack [-v] [-f] <source> <targetfolder>
@@ -41,7 +41,7 @@ Commands:
     rapify      Preprocess and rapify a config file.
     preprocess  Preprocess a file.
     derapify    Derapify a config.
-    binarize    Binarize a file using BI's binarize.exe (Windows only).
+    binarize    Binarize a file using BI's binarize.exe (Windows; on Linux through Proton).
     build       Build a PBO from a folder.
     pack        Pack a folder into a PBO without any binarization or rapification.
     inspect     Inspect a PBO and list contained files.
@@ -67,6 +67,7 @@ Options:
     -t --type <paatype>         PAA compression type (e.g. dxt1, dxt5). [default: dxt5]
     -s --signature <signature>  Signature path to use when signing the PBO.
     --v2                     Generate an older v2 signature.
+    --proton-binarize           Linux: binarize .p3d/.rtm with DayZ Tools' binarize.exe under Proton.
     -h --help                   Show usage information and exit.
        --version                Print the version number and exit.
 ";
@@ -98,6 +99,7 @@ pub struct Args {
     flag_signature: Option<String>,
     flag_indent: Option<String>,
     flag_v2: bool,
+    flag_proton_binarize: bool,
     flag_compress: bool,
     flag_type: String,
     flag_version: bool,
@@ -200,8 +202,11 @@ pub fn args(args: &mut Args) {
         std::process::exit(0);
     }
 
+    binarize::set_proton(args.flag_proton_binarize);
     error::init_warnings(HashSet::from_iter(args.flag_warning.clone()), args.flag_verbose);
-    run_command(&args).print_error(true);
+    let result = run_command(&args);
+    binarize::cleanup(); // must happen before print_error, which exits on error
+    result.print_error(true);
 
     print_warning_summary();
 }
