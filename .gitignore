@@ -1,2 +1,3 @@
 /target
+/testharness/build
 **/*.rs.bk

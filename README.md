@@ -88,6 +88,24 @@ On **Windows**, the easiest way to get compilation and static linking of OpenSSL
 - `OPENSSL_STATIC=1`
 - `OPENSSL_LIBS=libssl_static:libcrypto_static`
 
+## Testing
+
+Unit tests:
+
+```
+cargo test
+```
+
+The end-to-end DayZ test harness builds a small test mod, binarizes it, packs
+it into a PBO, signs it, and boots a local DayZ server (Steam app 223350, plus
+app 1042420 with `--both`) to prove the mod loads and runs:
+
+```
+testharness/run.sh --both
+```
+
+See [testharness/README.md](testharness/README.md) for details.
+
 ## Usage
 
 ```
@@ -104,10 +122,10 @@ Usage:
     armake2 unpack [-v] [-f] <source> <targetfolder>
     armake2 cat [-v] <source> <filename> [<target>]
     armake2 keygen [-v] [-f] <keyname>
-    armake2 sign [-v] [-f] [-s <signature>] [--v2] <privatekey> <pbo> [<signature>]
+    armake2 sign [-v] [-f] [--v2] <privatekey> <pbo> [<signature>]
     armake2 verify [-v] <publickey> <pbo> [<signature>]
-    armake2 paa2img [-v] [-f] [<source> [<target>]]
-    armake2 img2paa [-v] [-f] [-z] [-t <paatype>] [<source> [<target>]]
+    armake2 paa2img [-v] [-f] <source> <target>
+    armake2 img2paa [-v] [-f] [-c] [-t <paatype>] <source> <target>
     armake2 (-h | --help)
     armake2 --version
 ```
