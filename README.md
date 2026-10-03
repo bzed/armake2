@@ -116,7 +116,7 @@ Usage:
     armake2 preprocess [-v] [-f] [-w <wname>]... [-i <includefolder>]... [<source> [<target>]]
     armake2 derapify [-v] [-f] [-d <indentation>] [<source> [<target>]]
     armake2 binarize [-v] [-f] [-w <wname>]... <source> <target>
-    armake2 build [-v] [-f] [-w <wname>]... [-i <includefolder>]... [-x <excludepattern>]... [-e <headerext>]... [-k <privatekey>] [-s <signature>] <sourcefolder> [<target>]
+    armake2 build [-v] [-f] [--proton-binarize] [-w <wname>]... [-i <includefolder>]... [-x <excludepattern>]... [-e <headerext>]... [-k <privatekey>] [-s <signature>] <sourcefolder> [<target>]
     armake2 pack [-v] [-f] <sourcefolder> [<target>]
     armake2 inspect [-v] [<source>]
     armake2 unpack [-v] [-f] <source> <targetfolder>
@@ -131,3 +131,16 @@ Usage:
 ```
 
 See `armake2 --help` for more.
+
+## Binarizing models on Linux
+
+BI's `binarize.exe` only runs on Windows, so on Linux `build` copies `.p3d`/`.rtm` files as-is (with the `non-windows-binarization` warning). With `--proton-binarize` (and for `armake2 binarize`) armake2 runs the DayZ Tools `binarize.exe` under Proton instead. Config and rvmat rapification is unchanged.
+
+Requirements: DayZ Tools (Steam app 830640) and any Proton installed through Steam.
+
+- `STEAM_ROOT`: Steam directory. Default: first of `~/.steam/debian-installation`, `~/.steam/steam`, `~/.local/share/Steam` that has `steamapps/common`.
+- `DAYZ_TOOLS`: DayZ Tools directory. Default: `<steam>/steamapps/common/DayZ Tools` (uses `Bin/Binarize/binarize.exe`).
+- `PROTON`: Proton directory (containing the `proton` script). Default: `Proton Hotfix`, `Proton - Experimental`, `Proton Experimental`, then any `Proton*` in `steamapps/common`.
+- `BIOUTPUT=1`: show the output of Proton/binarize.exe.
+
+armake2 builds a throw-away sandbox in the temp directory (a copy of `Binarize`, a fresh Wine prefix and the staged files) once per run and removes it at the end. Wine's default `Z:` drive maps to `/`, and `binarize.exe` walks directory trees from the drive root, so it would run for minutes on a real home directory; the sandbox therefore points `Z:` at itself. The first model of a run is slow because the Wine prefix has to be created (up to a few minutes on a cold start). Nothing in the Steam installation is modified. Models that reference textures or materials by absolute path may need a `P:` drive, which is not set up.
