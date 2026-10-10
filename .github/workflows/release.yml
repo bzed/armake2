@@ -20,6 +20,7 @@ jobs:
       - name: Build
         run: cargo build --release --locked
       - name: Package
+        shell: bash
         run: |
           name=armake2-${GITHUB_REF_NAME//\//-}-debian-trixie-x86_64
           mkdir "$name"
