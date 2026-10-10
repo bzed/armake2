@@ -3,63 +3,17 @@ name: Release
 on:
   push:
     tags: ["v*"]
-  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  linux:
-    name: Linux (Debian trixie)
-    runs-on: ubuntu-latest
-    container: rust:1-trixie
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install build dependencies
-        run: apt-get update && apt-get install -y --no-install-recommends libssl-dev pkg-config
-      - name: Build
-        run: cargo build --release --locked
-      - name: Package
-        shell: bash
-        run: |
-          name=armake2-${GITHUB_REF_NAME//\//-}-debian-trixie-x86_64
-          mkdir "$name"
-          cp target/release/armake2 LICENSE README.md "$name/"
-          strip "$name/armake2"
-          tar czf "$name.tar.gz" "$name"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: linux
-          path: "*.tar.gz"
-
-  windows:
-    name: Windows (x86_64)
-    runs-on: windows-latest
-    env:
-      OPENSSL_STATIC: "1"
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install static OpenSSL
-        run: |
-          vcpkg install openssl:x64-windows-static-md
-          "OPENSSL_DIR=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md" >> $env:GITHUB_ENV
-      - name: Build
-        run: cargo build --release --locked
-      - name: Package
-        run: |
-          $name = "armake2-$($env:GITHUB_REF_NAME -replace '/', '-')-windows-x86_64"
-          New-Item -ItemType Directory $name
-          Copy-Item target\release\armake2.exe, LICENSE, README.md $name
-          Compress-Archive $name "$name.zip"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows
-          path: "*.zip"
+  ci:
+    uses: ./.github/workflows/ci.yml
 
   publish:
     name: Publish release
-    needs: [linux, windows]
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: ci
     runs-on: ubuntu-latest
     permissions:
       contents: write
